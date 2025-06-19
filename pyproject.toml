@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tbanalysis"
+version = "0.1.0"
+dependencies = [
+  "numpy",
+  "uproot",
+  "matplotlib"
+]
+authors = [
+    {name="Suman Kandel", email="suman.kandel@cern.ch"}
+]
+description = "TileCal TestBeam analysis package"
+readme = "README.md"
+keywords = ["TileCal", "TestBeam"]
+requires-python = ">=3.8"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Typing :: Typed",
+  "Private :: Do Not Upload",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+check = ["flake8"]
+
+
+[project.urls]
+"Source Code" = "https://github.com/kandels/tiletbana"
