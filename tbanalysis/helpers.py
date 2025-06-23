@@ -9,12 +9,21 @@ def remove_dash(cell: str) -> str:
     return ''.join(cell.split('-'))
 
 
-def filter_indices(h1000: np.ndarray) -> np.ndarray:
+def mask_negative_energy(arr: np.ndarray) -> np.ma.MaskedArray:
+    """
+    Mask negative and zero energy values
     
-    return
-
-def clip_e_positive(arr) -> np.ndarray:
-    return np.clip(arr, 0.000001, None)
+    Parameters
+    ----------
+    arr : np.ndarray
+        Input energy array
+        
+    Returns
+    -------
+    np.ma.MaskedArray
+        Masked array where negative/zero values are masked
+    """
+    return np.ma.masked_where(arr <= 0, arr)
 
 
 def root_like_histogram(
@@ -97,15 +106,14 @@ def root_like_histogram(
     return fig, ax, nevt
     
     
-
 def clong_contigious_cells(cell: str) -> List[List]:
     cell = remove_dash(cell)
+    # TODO - possibly remove the inconsistency between this and ctot cell definition. List of int vs List of Tuple.
     contigious_cells = {
-        'A3': [[5, 8, 9, 10, 15, 18], # LBC/M0C
-               [6, 7, 11, 10, 1]] # EBC
+        'A3': [[5, 8, 9, 10, 15, 18, 6, 7, 11, 12, 16, 17, 13, 14, 25, 26], # LBC/M0C
+               [6, 7, 11, 10, 8, 9, 14, 15, 4, 5, 2, 3, 16, 17, 1]] # EBC
     }
     return contigious_cells[cell]
-
 
 
 def ctot_contigious_cells(cell: str):
@@ -113,8 +121,9 @@ def ctot_contigious_cells(cell: str):
     # configuration used by stergios
     # https://indico.cern.ch/event/851769/contributions/3581404/attachments/1918746/3173263/TileCal_Analysis_Meeting2019_10_02_TileWeek.pdf
     contigious_cells = {
-        'A3':[[5, 8, 9, 10, 15, 18, 6, 7, 11, 12, 16, 17, 13, 14, 25, 26], # LBC/M0C
-            [6, 7, 10, 11, 8, 9, 14, 15, 4, 5, 2, 3, 16, 17, 1]] # EBC
+        'A3':[[(5, 8), (9, 10), (15, 18), (6, 7), (11, 12), (16, 17), (13, 14), (25, 26)], # LBC/M0C (L, R) channels
+            [(6, 7), (10, 11), (8, 9), (14, 15), (4, 5), (2, 3), (16, 17), (1,)]] # EBC
+        # 'A3':[[(5, 8), (9,10)], [(6, 7)]] # testing cells to verify changes in code.
     }
     return contigious_cells[cell]
 
@@ -137,33 +146,51 @@ def get_clong(cell: str, long_cell_energy: np.ndarray, beam_energy: int) -> np.n
     -------
     clong
     """
-    long_cell_energy = np.clip(long_cell_energy, 0.000001, None)
-    long_deposit_energy = long_cell_energy.sum(axis=0)
-    clong = long_deposit_energy / beam_energy    
+    energy_masked = np.ma.masked_where(long_cell_energy <= 0, long_cell_energy)
+    long_deposit_energy = np.ma.sum(energy_masked, axis=0)
+    clong = long_deposit_energy / beam_energy
+    clong = np.ma.filled(clong, np.nan)
+    
     return clong
 
 
 def get_ctot(cell: str, ctot_cell_energy: np.ndarray) -> np.ndarray:
+    """
+    Computes C_tot for a cell using masked arrays to handle negative values
+    
+    Parameters
+    ----------
+    cell: str
+        The cell name
+    ctot_cell_energy: np.ndarray
+        Energy deposits in cells, shape (PMTs x Events)
+        
+    Returns
+    -------
+    np.ndarray
+        C_tot values for each event
+    """
     ALPHA = 0.6
     N_CELL = 24
     
-    # clip negative energies to zero
-    ctot_cell_energy = np.clip(ctot_cell_energy, 0.000001, None)        
-    
-    # raise energies to power ALPHA
-    e_raised_alpha = ctot_cell_energy ** ALPHA
-    
-    e_raised_alpha_sum = np.sum(e_raised_alpha, axis=0)
-    e_raised_alpha_sum = np.where(e_raised_alpha_sum == 0, np.nan, e_raised_alpha_sum)
-    
+    # remove # from print statements for debug.
+    valid_mask = ctot_cell_energy > 0
+    energy_masked = np.ma.array(ctot_cell_energy, mask=~valid_mask)
+    e_raised_alpha = energy_masked ** ALPHA
+    # print('E raised alpha', e_raised_alpha)
+    e_raised_alpha_sum = np.ma.sum(e_raised_alpha, axis=0)
+    # print('E raised alpha sum', e_raised_alpha_sum)
     mean_raised_alpha = e_raised_alpha_sum / N_CELL
+    # print('Mean raised alpha', mean_raised_alpha)
     parenthesis_term = (e_raised_alpha - mean_raised_alpha) ** 2
-    sqrt_term = np.sum(parenthesis_term, axis=0) / N_CELL
-    inner = np.sqrt(sqrt_term)
-    
-    c_tot = inner / e_raised_alpha_sum 
-    
-    return c_tot
+    # print('Parenthesis term', parenthesis_term)
+    sqrt_term = np.sum(parenthesis_term, axis=0) / (N_CELL)
+    # print('Sqrt term', sqrt_term)
+    inner = np.ma.sqrt(sqrt_term)
+    # print('Inner', inner)
+    c_tot = inner / e_raised_alpha_sum
+    # print('Ctot', c_tot)    
+    return np.ma.filled(c_tot, np.nan)
 
 
 class ParticleSeparator:
@@ -184,10 +211,11 @@ class ParticleSeparator:
         self.ebc_energy = ebc_energy[self.eb_cells]
         self.mzeroc_energy = mzeroc_energy[self.lb_cells]
         
-        self.lba_energy = clip_e_positive(self.lba_energy)
-        self.lbc_energy = clip_e_positive(self.lbc_energy)
-        self.ebc_energy = clip_e_positive(self.ebc_energy)
-        self.mzeroc_energy = clip_e_positive(self.mzeroc_energy)
+        # Use masking instead of clipping
+        self.lba_energy = mask_negative_energy(lba_energy[self.lb_cells])
+        self.lbc_energy = mask_negative_energy(lbc_energy[self.lb_cells])
+        self.ebc_energy = mask_negative_energy(ebc_energy[self.eb_cells])
+        self.mzeroc_energy = mask_negative_energy(mzeroc_energy[self.lb_cells])
     
     
     def good_beam_trajectory(self, h1000=None) -> np.ndarray:
@@ -258,21 +286,19 @@ class ParticleSeparator:
         lbc_energy = h1000['EfitC02'].arrays(library='np')['EfitC02'].T[self.lb_cells]
         ebc_energy = h1000['EfitE03'].arrays(library='np')['EfitE03'].T[self.eb_cells]
         mzeroc_energy = h1000['EfitC01'].arrays(library='np')['EfitC01'].T[self.lb_cells]
+                
+        tot_energy = (np.ma.sum(self.lba_energy, axis=0) + 
+                     np.ma.sum(self.lbc_energy, axis=0) + 
+                     np.ma.sum(self.ebc_energy, axis=0) + 
+                     np.ma.sum(self.mzeroc_energy, axis=0))
         
-        lba_energy = clip_e_positive(lba_energy)
-        lbc_energy = clip_e_positive(lbc_energy)
-        ebc_energy = clip_e_positive(ebc_energy)
-        mzeroc_energy = clip_e_positive(mzeroc_energy)
-        
-        
-        tot_energy = lba_energy.sum(axis=0) + lbc_energy.sum(axis=0) + ebc_energy.sum(axis=0) + mzeroc_energy.sum(axis=0)
-        muon_indices = np.where(tot_energy < 5000)[0] # MeV
+        # Convert to regular array for comparison
+        tot_energy = tot_energy.filled(np.inf)  # Fill masked values with inf to exclude them
+        muon_indices = np.where(tot_energy < 5000)[0]
         
         print(f"Total events: {len(tot_energy)}")
         print(f"Muon events: {len(muon_indices)} ({100*len(muon_indices)/len(tot_energy):.1f}%)")
         print(f"Mean energy of muon events: {tot_energy[muon_indices].mean():.1f} MeV")     
-        
-        
         return muon_indices
     
     
@@ -333,17 +359,32 @@ class ParticleSeparator:
     
     
     def compute_ctot(self,cell: str, events: list):
+        """
+        Computes ctot for the given cell and events
         
+        Parameters
+        ----------
+            cell: Name of the cell. E.g- A-3 or A3
+            events: List of events to compute ctot for
+        Returns
+        ----------
+        Ctot value for given cell and events
+        """
+        
+        import itertools
         ctot_cells = ctot_contigious_cells(cell=cell)
-    
-        lbc_trans = self.lbc_energy[ctot_cells[0]]
-        m0c_trans = self.mzeroc_energy[ctot_cells[0]]
-        ebc_trans = self.ebc_energy[ctot_cells[1]]
+        lbc_chan_ene = np.array([self.lbc_energy[list(c)].sum(axis=0) for c in ctot_cells[0]])
+        mzeroc_chan_ene = np.array([self.mzeroc_energy[list(c)].sum(axis=0) for c in ctot_cells[0]])
+        ebc_chan_ene = np.array([self.ebc_energy[list(c)].sum(axis=0) for c in ctot_cells[1]])
         
-        tot_trans = np.vstack([lbc_trans, m0c_trans, ebc_trans])        
-        tot_pass_trans = tot_trans[:, events]
+        #print(lbc_chan_ene[:,events])
+        #print(lbc_chan_ene.shape)        
+        #print(lbc_chan_ene.shape, mzeroc_chan_ene.shape, ebc_chan_ene.shape)
         
-        ctot = get_ctot(cell=cell, ctot_cell_energy=tot_pass_trans)
+        tot_chan_ene = np.vstack([lbc_chan_ene, mzeroc_chan_ene, ebc_chan_ene])
+        tot_chan_ene_events = tot_chan_ene[:, events]
+        #print(tot_chan_ene_events.shape)
+        ctot = get_ctot(cell=cell, ctot_cell_energy=tot_chan_ene_events)
         return ctot
     
     # not much useful - remove this func in future
@@ -387,5 +428,3 @@ class ParticleSeparator:
         #plt.savefig('test_muon.jpg')
         
         return fig, ax, n_evt
-    
-    
