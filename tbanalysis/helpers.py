@@ -80,10 +80,6 @@ def root_like_histogram(
     ax.set_xticks(x_ticks)
     ax.set_yticks(y_ticks)
     
-    #if ctot:
-    #    ax.set_xticklabels([f"{x:.0f}" if x == 0 else f"{x:.2f}" for x in x_ticks])
-    #    ax.set_yticklabels([f"{y:.0f}" if y == 0 else f"{y:.1f}" for y in y_ticks])
-    
     H, xedges, yedges = np.histogram2d(x, y, bins=[n_xbins, n_ybins],
                                       range=[[xmin, xmax], [ymin, ymax]])
     
@@ -110,20 +106,18 @@ def clong_contigious_cells(cell: str) -> List[List]:
     cell = remove_dash(cell)
     # TODO - possibly remove the inconsistency between this and ctot cell definition. List of int vs List of Tuple.
     contigious_cells = {
-        'A3': [[5, 8, 9, 10, 15, 18, 6, 7, 11, 12, 16, 17, 13, 14, 25, 26], # LBC/M0C
-               [6, 7, 11, 10, 8, 9, 14, 15, 4, 5, 2, 3, 16, 17, 1]] # EBC
+        'A3': [[5, 8, 9, 10, 15, 18], # LBC/M0C
+               [6, 7, 11, 10, 20, 21]] # EBC
     }
     return contigious_cells[cell]
 
 
 def ctot_contigious_cells(cell: str):
     cell = remove_dash(cell)
-    # configuration used by stergios
-    # https://indico.cern.ch/event/851769/contributions/3581404/attachments/1918746/3173263/TileCal_Analysis_Meeting2019_10_02_TileWeek.pdf
+    # standard cells in TileTB analyses. Similar to Tigran 2021 paper.
     contigious_cells = {
         'A3':[[(5, 8), (9, 10), (15, 18), (6, 7), (11, 12), (16, 17), (13, 14), (25, 26)], # LBC/M0C (L, R) channels
-            [(6, 7), (10, 11), (8, 9), (14, 15), (4, 5), (2, 3), (16, 17), (1,)]] # EBC
-        # 'A3':[[(5, 8), (9,10)], [(6, 7)]] # testing cells to verify changes in code.
+            [(6, 7), (10, 11), (20, 21), (8, 9), (14, 15), (22, 23), (16, 17), (30,31)]] # EBC
     }
     return contigious_cells[cell]
 
@@ -239,6 +233,7 @@ class ParticleSeparator:
         if h1000 is None:
             h1000 = self.h1000
         
+        # move to Ximp, Yimp coordinates in future as these coordinates are closer to the scanning table.
         x = h1000['Xcha1_0'].arrays(library='np')['Xcha1_0']
         y = h1000['Ycha1_0'].arrays(library='np')['Ycha1_0']
         
@@ -267,7 +262,7 @@ class ParticleSeparator:
         """
         Finds out muon events from the TestBeam ntuple. Muon events are identified as Minimum Ionizing Particles(MIP).
         Similar to earlier analysis, an event is defined as muon event if it's total energy deposition in the detector
-        is less than 5 GeV. Detector - LBA 65, LBC 65, M0C, EBC 65. M0A module is discarded for total energy computation.
+        modules is less than 5 GeV. Modules - LBA 65, LBC 65, M0C, EBC 65. M0A module is discarded for total energy computation.
         Parameters
         -----------
         h1000:
@@ -286,11 +281,17 @@ class ParticleSeparator:
         lbc_energy = h1000['EfitC02'].arrays(library='np')['EfitC02'].T[self.lb_cells]
         ebc_energy = h1000['EfitE03'].arrays(library='np')['EfitE03'].T[self.eb_cells]
         mzeroc_energy = h1000['EfitC01'].arrays(library='np')['EfitC01'].T[self.lb_cells]
-                
-        tot_energy = (np.ma.sum(self.lba_energy, axis=0) + 
-                     np.ma.sum(self.lbc_energy, axis=0) + 
-                     np.ma.sum(self.ebc_energy, axis=0) + 
-                     np.ma.sum(self.mzeroc_energy, axis=0))
+        
+        # mask negative energy
+        lba_energy = mask_negative_energy(lba_energy)
+        lbc_energy = mask_negative_energy(lbc_energy)
+        ebc_energy = mask_negative_energy(ebc_energy)
+        mzeroc_energy = mask_negative_energy(mzeroc_energy)
+                        
+        tot_energy = (np.ma.sum(lba_energy, axis=0) + 
+                     np.ma.sum(lbc_energy, axis=0) + 
+                     np.ma.sum(ebc_energy, axis=0) + 
+                     np.ma.sum(mzeroc_energy, axis=0))
         
         # Convert to regular array for comparison
         tot_energy = tot_energy.filled(np.inf)  # Fill masked values with inf to exclude them
@@ -327,20 +328,24 @@ class ParticleSeparator:
         muon_indices = self.muon_events()
         muon_s1 = s_one[muon_indices]
         muon_s2 = s_two[muon_indices]
-        good_muon_adc = (muon_s1 < 8000) & (muon_s2 < 8000)
-        s1_mpv = muon_s1[good_muon_adc].mean()
-        s2_mpv = muon_s2[good_muon_adc].mean()
+        good_muon_adc = (muon_s1 < 7500) & (muon_s2 < 7500)
+        
+        # get the mpv(mode) of S1cou and S2cou
+        n_ent_s1, n_bins_s1 = np.histogram(muon_s1[good_muon_adc], bins=400, range=(0, 7500))
+        n_ent_s2, n_bins_s2 = np.histogram(muon_s2[good_muon_adc], bins=400, range=(0, 7500))
+        max_bin_s1, max_bin_s2 = np.argmax(n_ent_s1), np.argmax(n_ent_s2)
+        mpv_bin_s1, mpv_bin_s2 = (n_bins_s1[max_bin_s1] + n_bins_s1[max_bin_s1 + 1]) / 2, (n_bins_s2[max_bin_s2] + n_bins_s2[max_bin_s2 + 1]) / 2
         
        
-        s1_cut = (s_one < 8000) & (s_one < 2 * s1_mpv)
-        s2_cut = (s_two < 8000) & (s_two < 2 * s2_mpv)
+        s1_cut = (s_one < 7500) & (s_one < 2 * mpv_bin_s1)
+        s2_cut = (s_two < 7500) & (s_two < 2 * mpv_bin_s2)
         single_particle_mask = s1_cut & s2_cut
         
         single_particle_indices = np.where(single_particle_mask)[0]
         
         print(f"Total events: {len(s_one)}")
-        print(f"S1 MPV (MIP): {s1_mpv:.2f}")
-        print(f"S2 MPV (MIP): {s2_mpv:.2f}")
+        print(f"S1 MPV (MIP): {mpv_bin_s1:.2f}")
+        print(f"S2 MPV (MIP): {mpv_bin_s2:.2f}")
         print(f"Events passing cuts: {len(single_particle_indices)} ({100*len(single_particle_indices)/len(s_one):.1f}%)")
         
         return single_particle_indices
@@ -372,21 +377,18 @@ class ParticleSeparator:
         """
         
         import itertools
+        
         ctot_cells = ctot_contigious_cells(cell=cell)
         lbc_chan_ene = np.array([self.lbc_energy[list(c)].sum(axis=0) for c in ctot_cells[0]])
         mzeroc_chan_ene = np.array([self.mzeroc_energy[list(c)].sum(axis=0) for c in ctot_cells[0]])
         ebc_chan_ene = np.array([self.ebc_energy[list(c)].sum(axis=0) for c in ctot_cells[1]])
         
-        #print(lbc_chan_ene[:,events])
-        #print(lbc_chan_ene.shape)        
-        #print(lbc_chan_ene.shape, mzeroc_chan_ene.shape, ebc_chan_ene.shape)
-        
         tot_chan_ene = np.vstack([lbc_chan_ene, mzeroc_chan_ene, ebc_chan_ene])
         tot_chan_ene_events = tot_chan_ene[:, events]
-        #print(tot_chan_ene_events.shape)
         ctot = get_ctot(cell=cell, ctot_cell_energy=tot_chan_ene_events)
         return ctot
-    
+
+
     # not much useful - remove this func in future
     def single_particles(self):
         
