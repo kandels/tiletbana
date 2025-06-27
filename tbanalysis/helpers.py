@@ -389,6 +389,74 @@ class ParticleSeparator:
         return ctot
 
 
+    def pure_electron_events(self, 
+                             cell: str,
+                             ctot: np.ndarray,
+                             clong: np.ndarray,
+                             elec_had_indices: np.ndarray,
+                             ellipse_center: tuple = (0.14, 0.9),
+                             ellipse_axes: tuple = (0.05, 0.3)
+        ) -> np.ndarray:
+        """
+        Selects electron events using elliptical cuts in Ctot-Clong space.
+        
+        Parameters
+        ----------
+        cell : str
+            Cell name (e.g., 'A-3' or 'A3') - for validation purposes
+        ctot: np.ndarray
+            numpy array of ctot values (same length as elec_had_indices)
+        clong: np.ndarray
+            numpy array of clong values (same length as elec_had_indices)
+        elec_had_indices : np.ndarray
+            numpy array of electron and hadron event indices (event numbers)
+        ellipse_center : tuple, optional
+            (h, k) center of electron ellipse in (Ctot, Clong) space, by default (0.14, 0.9)
+        ellipse_axes : tuple, optional
+            (a, b) semi-major and semi-minor axes, by default (0.05, 0.3)
+            
+        Returns
+        -------
+        np.ndarray
+            Array of original event indices that pass the electron elliptical cut
+            
+        References
+        ----------
+        Ellipse definition following Siruansh analysis:
+        https://indico.cern.ch/event/1293030/contributions/5436570/attachments/2665654/4619155/TB%20week%2014%20June.pdf
+        """
+        if len(ctot) != len(clong) or len(ctot) != len(elec_had_indices):
+            raise ValueError(f"Input arrays must have same length: ctot={len(ctot)}, clong={len(clong)}, indices={len(elec_had_indices)}")
+        
+        h, k = ellipse_center  # center (Ctot, Clong)
+        a, b = ellipse_axes    # semi-major, semi-minor axes
+        
+        electron_indices = []
+        
+        for i, event_idx in enumerate(elec_had_indices):
+            c_t = ctot[i]
+            c_l = clong[i]
+            
+            if np.isnan(c_t) or np.isnan(c_l):
+                continue
+            
+            # Ellipse equation: ((x-h)/a)² + ((y-k)/b)² ≤ 1
+            lhs = ((c_t - h)/a) ** 2 + ((c_l - k)/b) ** 2
+            
+            # Check if point is inside ellipse
+            if lhs <= 1:
+                electron_indices.append(event_idx)
+        
+        electron_indices = np.array(electron_indices)
+        
+        print(f"Events analyzed: {len(elec_had_indices)}")
+        print(f"Electron events (elliptical cut): {len(electron_indices)} ({100*len(electron_indices)/len(elec_had_indices):.1f}%)")
+        print(f"Ellipse center (Ctot, Clong): ({h}, {k})")
+        print(f"Ellipse axes (a, b): ({a}, {b})")
+        
+        return electron_indices
+
+
     # not much useful - remove this func in future
     def single_particles(self):
         
