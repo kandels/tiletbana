@@ -332,13 +332,15 @@ class ParticleSeparator:
         x = h1000['Xcha2_0'].arrays(library='np')['Xcha2_0']
         y = h1000['Ycha2_0'].arrays(library='np')['Ycha2_0']
         
-        # Remove bad tADC readout. Bad values at 4096 come from tADC misread.
+        # Remove bad tADC readout. Bad values at 4096 come from tADC misread. BC1/BC2 dimensions 50 mm x 50 mm.
         mask = (np.abs(x) < 50) & (np.abs(y)<50)
         # below prints use them for debug in future
-        #print(f'Good events {mask.sum()}')
-        #print(f'Total Bad events {len(x) - mask.sum()}')
+        # print(f'Good events {mask.sum()}')
+        # print(f'Total Bad events {len(x) - mask.sum()}')
         x_good = x[mask]
         y_good = y[mask]
+        
+        good_readout_indices = np.where(mask)[0]
         
         x_mu, x_sigma = norm.fit(x_good, loc=x_good.mean(), scale=x_good.std())
         y_mu, y_sigma = norm.fit(y_good, loc=y_good.mean(), scale=y_good.std())
@@ -347,7 +349,8 @@ class ParticleSeparator:
         x_mask = np.abs(x_good - x_mu) < 25
         y_mask = np.abs(y_good - y_mu) < 25
         good_traj = (x_mask) & (y_mask)
-        good_traj_indices = np.where(good_traj)[0]
+        filtered_indices = np.where(good_traj)[0]        
+        good_traj_indices = good_readout_indices[filtered_indices]
         
         # use those line for debug in future
         total_events = len(x)
@@ -355,7 +358,8 @@ class ParticleSeparator:
         print(f"Total events: {total_events}")
         print(f"Events with good trajectory: {good_events} ({100*good_events/total_events:.1f}%)")
         print(f"Beam center: x = {x_mu:.4f} mm, y = {y_mu:.4f} mm")
-        #print(f"Stds are {x_sigma} and {y_sigma}")
+        # print(f"Stds are {x_sigma} and {y_sigma}")
+        # print(x_good.min(), x_good.max(), y_good.min(), y_good.max())
         
         return good_traj_indices
         
