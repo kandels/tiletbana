@@ -9,21 +9,23 @@ def remove_dash(cell: str) -> str:
     return ''.join(cell.split('-'))
 
 
-def mask_negative_energy(arr: np.ndarray) -> np.ma.MaskedArray:
+def mask_energy_threshold(arr: np.ndarray, threshold: float = 0) -> np.ma.MaskedArray:
     """
-    Mask negative and zero energy values
+    Mask array values below threshold
     
     Parameters
     ----------
     arr : np.ndarray
         Input energy array
+    threshold: float [default = 0]
+        Threshold to mask the array
         
     Returns
     -------
     np.ma.MaskedArray
         Masked array where negative/zero values are masked
     """
-    return np.ma.masked_where(arr <= 0, arr)
+    return np.ma.masked_where(arr <= threshold, arr)
 
 
 def root_like_histogram(
@@ -187,6 +189,99 @@ def get_ctot(cell: str, ctot_cell_energy: np.ndarray) -> np.ndarray:
     return np.ma.filled(c_tot, np.nan)
 
 
+def reco_energy(h1000: np.ndarray, modules:List[str]=None, events: list = None, module: str = None, cell: str = None):
+    """
+    Computes the total energy deposited in 4 modules - LBA 65, LBC 65, EBC 65, M0C
+    A cell's reading is assumed as noise if E_c = E_L + E_R < 2 * sigma_noise.
+    Sigma_noise is taken as 30 MeV following 2021 hadron paper.
+    This requirement could be different for later test beam. Consult with Tile TB
+    operators for accurate value.
+    
+    Parameters
+    ----------
+    h1000: 
+        TileTB h1000 ntuple in np.ndarray format
+    modules:
+        List of modules. Subset of - ['M0A', 'LBA65', 'M0C', 'LBC65', 'EBC65']
+    module:
+
+    events:
+        List of events to calculate reconstructed energy for
+        
+    Returns
+    ----------
+        energy_evt:
+            numpy array of total reconstructed energy in each event
+    """
+    
+    from itertools import chain
+    
+    sigma_noise = 30 # MeV
+    threshold = 2 * sigma_noise
+    
+    module_energy = dict.fromkeys(modules)
+    module_energy_col = {'M0A': 'EfitA01', 'LBA65': 'EfitA02', 'M0C': 'EfitC01', 'LBC65': 'EfitC02', 'EBC65': 'EfitE03'}
+    print(module_energy)
+    
+    lba_energy = h1000['EfitA02'].arrays(library='np')['EfitA02'].T
+    lbc_energy = h1000['EfitC02'].arrays(library='np')['EfitC02'].T
+    mzeroc_energy = h1000['EfitC01'].arrays(library='np')['EfitC01'].T
+    ebc_energy = h1000['EfitE03'].arrays(library='np')['EfitE03'].T
+    
+    
+    if cell is None:
+        cell_map = {
+            'LB': [
+                (1, 4), (5, 6), (9, 10), (15, 18), (19, 20), (23, 24), (27, 30), (33, 36), (37, 38), (46, 47),
+                (2, 3), (6, 7), (11, 12), (16, 17), (21, 22), (28, 29), (34, 35), (40, 41), (44, 45),
+                (0, ), (13, 14), (25, 26), (39, 42)
+                ],
+            'EB': [
+                (6, 7), (10, 11), (20, 21), (24, 25), (32, 33),
+                (8, 9), (14, 15), (22, 23), (26, 27), (34, 35), (4, 5),
+                (2, 3), (16, 17), (30, 31),
+                (12, ), (13, ), (0, ), (1, )
+            ] 
+        }
+        lb_cells = list(chain.from_iterable(cell_map['LB']))
+        eb_cells = list(chain.from_iterable(cell_map['EB']))
+        lba_chan_ene = np.array([lba_energy[list(c)].sum(axis=0) for c in cell_map['LB']])
+        lbc_chan_ene = np.array([lbc_energy[list(c)].sum(axis=0) for c in cell_map['LB']])
+        mzeroc_chan_ene = np.array([mzeroc_energy[list(c)].sum(axis=0) for c in cell_map['LB']])
+        ebc_chan_ene = np.array([ebc_energy[list(c)].sum(axis=0) for c in cell_map['EB']])
+        
+        # mask energy less than 2 * sigma_noise
+        lba_chan_ene = mask_energy_threshold(lba_chan_ene, threshold=threshold)
+        lbc_chan_ene = mask_energy_threshold(lbc_chan_ene, threshold=threshold)
+        ebc_chan_ene = mask_energy_threshold(ebc_chan_ene, threshold=threshold)
+        mzeroc_chan_ene = mask_energy_threshold(mzeroc_chan_ene, threshold=threshold)
+        
+        # filter which module to add to total energy
+        tot_energy = []
+        if 'M0C' in modules:
+            tot_energy.append(mzeroc_energy)
+        if 'LBC65' in modules:
+            tot_energy.append(lbc_chan_ene)
+        if 'EBC65' in modules:
+            tot_energy.append(ebc_chan_ene)
+        if 'LBA65' in modules:
+            tot_energy.append(lba_chan_ene)
+        
+        print(f'Used {len(tot_energy)} modules from given {len(modules)} modules to compute energy')
+        #tot_chan_ene = np.vstack([lbc_chan_ene, mzeroc_chan_ene, ebc_chan_ene])
+        tot_chan_ene = np.vstack(tot_energy)
+        
+    else: # fill it later to compute reco energy for a single cell
+        pass
+    
+    if events is not None:
+        tot_chan_ene = tot_chan_ene[:,events]
+    
+    tot_chan_ene = tot_chan_ene.sum(axis=0)
+    good_energy_events = np.where(tot_chan_ene > threshold)
+    tot_chan_ene = tot_chan_ene[good_energy_events]
+    return tot_chan_ene
+
 class ParticleSeparator:
     
     
@@ -206,10 +301,10 @@ class ParticleSeparator:
         self.mzeroc_energy = mzeroc_energy[self.lb_cells]
         
         # Use masking instead of clipping
-        self.lba_energy = mask_negative_energy(lba_energy[self.lb_cells])
-        self.lbc_energy = mask_negative_energy(lbc_energy[self.lb_cells])
-        self.ebc_energy = mask_negative_energy(ebc_energy[self.eb_cells])
-        self.mzeroc_energy = mask_negative_energy(mzeroc_energy[self.lb_cells])
+        self.lba_energy = mask_energy_threshold(lba_energy[self.lb_cells])
+        self.lbc_energy = mask_energy_threshold(lbc_energy[self.lb_cells])
+        self.ebc_energy = mask_energy_threshold(ebc_energy[self.eb_cells])
+        self.mzeroc_energy = mask_energy_threshold(mzeroc_energy[self.lb_cells])
     
     
     def good_beam_trajectory(self, h1000=None) -> np.ndarray:
@@ -234,16 +329,23 @@ class ParticleSeparator:
             h1000 = self.h1000
         
         # move to Ximp, Yimp coordinates in future as these coordinates are closer to the scanning table.
-        x = h1000['Xcha1_0'].arrays(library='np')['Xcha1_0']
-        y = h1000['Ycha1_0'].arrays(library='np')['Ycha1_0']
+        x = h1000['Xcha2_0'].arrays(library='np')['Xcha2_0']
+        y = h1000['Ycha2_0'].arrays(library='np')['Ycha2_0']
         
-        #μm to mm
-        x, y = x * 1e-3, y * 1e-3
-        x_mu, _ = norm.fit(x)
-        y_mu, _ = norm.fit(y)
+        # Remove bad tADC readout. Bad values at 4096 come from tADC misread.
+        mask = (np.abs(x) < 50) & (np.abs(y)<50)
+        # below prints use them for debug in future
+        #print(f'Good events {mask.sum()}')
+        #print(f'Total Bad events {len(x) - mask.sum()}')
+        x_good = x[mask]
+        y_good = y[mask]
         
-        x_mask = np.abs(x - x_mu) < 25
-        y_mask = np.abs(y - y_mu) < 25
+        x_mu, x_sigma = norm.fit(x_good, loc=x_good.mean(), scale=x_good.std())
+        y_mu, y_sigma = norm.fit(y_good, loc=y_good.mean(), scale=y_good.std())
+        
+        # Mean based selection. x_sigma, y_sigma can also be used.
+        x_mask = np.abs(x_good - x_mu) < 25
+        y_mask = np.abs(y_good - y_mu) < 25
         good_traj = (x_mask) & (y_mask)
         good_traj_indices = np.where(good_traj)[0]
         
@@ -253,6 +355,7 @@ class ParticleSeparator:
         print(f"Total events: {total_events}")
         print(f"Events with good trajectory: {good_events} ({100*good_events/total_events:.1f}%)")
         print(f"Beam center: x = {x_mu:.4f} mm, y = {y_mu:.4f} mm")
+        #print(f"Stds are {x_sigma} and {y_sigma}")
         
         return good_traj_indices
         
@@ -283,10 +386,10 @@ class ParticleSeparator:
         mzeroc_energy = h1000['EfitC01'].arrays(library='np')['EfitC01'].T[self.lb_cells]
         
         # mask negative energy
-        lba_energy = mask_negative_energy(lba_energy)
-        lbc_energy = mask_negative_energy(lbc_energy)
-        ebc_energy = mask_negative_energy(ebc_energy)
-        mzeroc_energy = mask_negative_energy(mzeroc_energy)
+        lba_energy = mask_energy_threshold(lba_energy)
+        lbc_energy = mask_energy_threshold(lbc_energy)
+        ebc_energy = mask_energy_threshold(ebc_energy)
+        mzeroc_energy = mask_energy_threshold(mzeroc_energy)
                         
         tot_energy = (np.ma.sum(lba_energy, axis=0) + 
                      np.ma.sum(lbc_energy, axis=0) + 
@@ -394,8 +497,8 @@ class ParticleSeparator:
                              ctot: np.ndarray,
                              clong: np.ndarray,
                              elec_had_indices: np.ndarray,
-                             ellipse_center: tuple = (0.14, 0.9),
-                             ellipse_axes: tuple = (0.05, 0.3)
+                             ellipse_center: tuple = (0.14, 1),
+                             ellipse_axes: tuple = (0.03, 0.2)
         ) -> np.ndarray:
         """
         Selects electron events using elliptical cuts in Ctot-Clong space.
@@ -444,7 +547,7 @@ class ParticleSeparator:
             lhs = ((c_t - h)/a) ** 2 + ((c_l - k)/b) ** 2
             
             # Check if point is inside ellipse
-            if lhs <= 1:
+            if lhs < 1:
                 electron_indices.append(event_idx)
         
         electron_indices = np.array(electron_indices)
