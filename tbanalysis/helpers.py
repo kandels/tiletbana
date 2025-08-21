@@ -74,10 +74,10 @@ def root_like_histogram(
     ctot = False
     if xmax==0.20 and ymax==1.6:
         ctot = True
-    fig, ax = plt.subplots(figsize=(8,6))
+    fig, ax = plt.subplots(figsize=(6,6))
     
-    x_ticks = np.arange(0, xmax + x_inc, x_inc)
-    y_ticks = np.arange(0, ymax + y_inc, y_inc)
+    x_ticks = np.arange(xmin, xmax + x_inc, x_inc)
+    y_ticks = np.arange(ymin, ymax + y_inc, y_inc)
     
     ax.set_xticks(x_ticks)
     ax.set_yticks(y_ticks)
