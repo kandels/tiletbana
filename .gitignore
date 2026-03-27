@@ -19,3 +19,6 @@ venv.bak/
 # plots
 **/*png
 **/*pdf
+
+# results
+results/

@@ -413,7 +413,7 @@ class ParticleSeparator:
         x_mu, x_sigma = norm.fit(x_good, loc=x_good.mean(), scale=x_good.std())
         y_mu, y_sigma = norm.fit(y_good, loc=y_good.mean(), scale=y_good.std())
         
-        # Mean based selection. x_sigma, y_sigma can also be used.
+        # Mean based selection. x_sigma, y_sigma can also be used
         x_mask = np.abs(x_good - x_mu) < 25
         y_mask = np.abs(y_good - y_mu) < 25
         good_traj = (x_mask) & (y_mask)
@@ -602,6 +602,7 @@ class ParticleSeparator:
         muon_indices = self.muon_events()
         muon_s1 = s_one[muon_indices]
         muon_s2 = s_two[muon_indices]
+        # remove ADC saturation
         good_muon_adc = (muon_s1 < 7500) & (muon_s2 < 7500)
         
         # get the mpv(mode) of S1cou and S2cou
@@ -632,8 +633,10 @@ class ParticleSeparator:
         ebc_long = self.ebc_energy[clong_cells[1]]
         
         tot_long = np.vstack([lbc_long, m0c_long, ebc_long])
-        tot_pass_long = tot_long[:, events]              
+        # print(tot_long.shape)
+        tot_pass_long = tot_long if events is None else tot_long[:, events]              
         clong = get_clong(cell=cell, long_cell_energy=tot_pass_long, beam_energy=beam_energy)
+        # print(clong.shape)
         return clong
     
     
@@ -658,7 +661,7 @@ class ParticleSeparator:
         ebc_chan_ene = np.array([self.ebc_energy[list(c)].sum(axis=0) for c in ctot_cells[1]])
         
         tot_chan_ene = np.vstack([lbc_chan_ene, mzeroc_chan_ene, ebc_chan_ene])
-        tot_chan_ene_events = tot_chan_ene[:, events]
+        tot_chan_ene_events = tot_chan_ene if events is None else tot_chan_ene[:, events]
         ctot = get_ctot(cell=cell, ctot_cell_energy=tot_chan_ene_events)
         return ctot
 
@@ -730,45 +733,3 @@ class ParticleSeparator:
         
         return electron_indices
 
-
-    # not much useful - remove this func in future
-    def single_particles(self):
-        
-        import matplotlib.pyplot as plt
-        
-        sig_scint_i = None
-        sig_scint_ii = None
-        
-        # get muon signal in scintilators based on similar energy deposit in LBA 65/ LBC 65
-        
-        lba_event_energy = self.lba_energy.sum(axis=0)/1000 # GeV
-        lbc_event_energy = self.lbc_energy.sum(axis=0)/1000
-        ebc_event_energy = self.ebc_energy.sum(axis=0)/1000
-        mzeroc_event_energy = self.mzeroc_energy.sum(axis=0)/1000
-        
-        s1_count = self.h1000['S1cou'].array(library='np')
-        s2_count = self.h1000['S2cou'].array(library='np')        
-        mask = (s1_count < 2 * self.s1mpv) & (s2_count < 2 * self.s2mpv)
-        
-        lba_event_energy = lba_event_energy[mask]
-        lbc_event_energy = lbc_event_energy[mask]
-        
-        print(lba_event_energy.shape)
-        n_evt = lba_event_energy.shape[0]
-        print("LBC", "mean", lbc_event_energy.mean(), "min", lbc_event_energy.min(), "max", lbc_event_energy.max())
-        print("LBA", "mean", lba_event_energy.mean(), "min", lba_event_energy.max(), "max", lba_event_energy.max())
-        #exit()
-        
-        #LBC on x axis and LBA on y axis
-        y_max = int(lba_event_energy.max()) + 5
-        y_max = 5
-        x_max = int(lbc_event_energy.max()) + 10
-        fig, ax = root_like_histogram(x=lbc_event_energy, y=lba_event_energy, xmin=0, xmax=x_max, ymin=0, ymax=y_max, x_inc=10, y_inc=0.5)
-        ax.set_xlabel(r'$\text{E}_{\text{LBC}}  \text{[GeV]}$')
-        ax.set_ylabel(r'$\text{E}_{\text{LBA}}  \text{[GeV]}$')
-        #plt.hist2d(lbc_event_energy, lba_event_energy, bins=(500, 500))
-        
-        #plt.colorbar()  
-        #plt.savefig('test_muon.jpg')
-        
-        return fig, ax, n_evt
